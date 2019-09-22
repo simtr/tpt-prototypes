@@ -87,7 +87,7 @@ bool do_move(atom * parts, atom & current, int resultx_quant, int resulty_quant)
 	}
 }
 
-std::atomic<uint32_t> last_partcount = 0;
+std::atomic<uint32_t> last_partcount(0);
 
 void simulate_region(atom * parts, region_bounds region, bool mutex) {
 	int nx, ny, neighbourSpace, neighbourDiverse;
