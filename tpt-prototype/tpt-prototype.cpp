@@ -454,6 +454,9 @@ int main(int argc, char * args[])
 
 	long frame_counter = 0;
 
+	bool simulating = true;
+	bool step_lock = false;
+
 	while (running) {
 		frame_counter++;
 		SDL_Event event;
@@ -466,6 +469,13 @@ int main(int argc, char * args[])
 			case SDL_KEYDOWN:
 			{
 				switch (event.key.keysym.sym) {
+				case SDLK_SPACE:
+					simulating = !simulating;
+					break;
+				case SDLK_f:
+					simulating = true;
+					step_lock = true;
+					break;
 				case SDLK_0:
 					particle_type = TYPE_NONE;
 					break;
@@ -526,7 +536,13 @@ int main(int argc, char * args[])
 		}
 
 		auto simulation_start = std::chrono::high_resolution_clock::now();
-		simulate(parts);
+		if (simulating) {
+			simulate(parts);
+			if (step_lock) {
+				step_lock = false;
+				simulating = false;
+			}
+		}
 		auto draw_start = std::chrono::high_resolution_clock::now();
 		draw(parts, vid);
 		auto draw_end = std::chrono::high_resolution_clock::now();
