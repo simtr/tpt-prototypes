@@ -4,6 +4,7 @@
 cmake_minimum_required (VERSION 3.8)
 
 find_package(SDL2 REQUIRED)
+find_package(Threads REQUIRED)
 
 # Add source to this project's executable.
 add_executable (tpt "tpt-prototype.cpp" "tpt-prototype.h")
