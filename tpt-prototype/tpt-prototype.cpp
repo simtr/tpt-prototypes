@@ -147,6 +147,12 @@ void simulate_region(atom * parts, region_bounds region, bool mutex) {
 					}
 				}
 
+			if (!neighbourDiverse) {
+				current.vx = 0.0f;
+				current.vy = 0.0f;
+				continue;
+			}
+
 			if ((fabsf(current.vx) <= 0.01f && fabsf(current.vy) <= 0.01f) || current.type == TYPE_SOLID)
 				continue;
 
