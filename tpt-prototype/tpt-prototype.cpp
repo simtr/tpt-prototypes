@@ -46,6 +46,8 @@ struct atom {
 	uint8_t type = TYPE_NONE;
 	float vx = 0.0f;
 	float vy = 0.0f;
+	float x = 0.0f;
+	float y = 0.0f;
 	bool mutex = false;
 };
 
@@ -71,7 +73,9 @@ int randd() {
 	return (rand() % 2) * 2 - 1;
 }
 
-bool do_move(atom * parts, atom & current, int resultx_quant, int resulty_quant) {
+bool do_move(atom * parts, atom & current, float resultx, float resulty) {
+	int resultx_quant = PART_POS_QUANT(resultx);
+	int resulty_quant = PART_POS_QUANT(resulty);
 	if (resultx_quant < 0 || resultx_quant >= SIMULATIONW || resulty_quant < 0 || resulty_quant >= SIMULATIONH) {
 		current.type = TYPE_NONE;
 		return true;
@@ -83,6 +87,8 @@ bool do_move(atom * parts, atom & current, int resultx_quant, int resulty_quant)
 		atom temp = target;
 		target = current;
 		current = temp;
+		target.x = resultx;
+		target.y = resulty;
 		return true;
 	}
 	else {
@@ -98,15 +104,14 @@ void simulate_region(atom * parts, region_bounds region, bool mutex) {
 	float mv = 0.0f, resultx = 0.0f, resulty = 0.0f;
 	int resultx_quant, resulty_quant;
 
-	for (int y = region.y; y < region.y + region.h; y++) {
-		if (y == 0 || y == SIMULATIONH - 1)
+	for (int gridY = region.y; gridY < region.y + region.h; gridY++) {
+		if (gridY == 0 || gridY == SIMULATIONH - 1)
 			continue;
-		for (int x = region.x; x < region.x + region.w; x++) {
-			if (x == 0 || x == SIMULATIONW - 1)
+		for (int gridX = region.x; gridX < region.x + region.w; gridX++) {
+			if (gridX == 0 || gridX == SIMULATIONW - 1)
 				continue;
 
-			int xy = PART(x, y);
-			atom & current = parts[xy];
+			atom & current = parts[PART(gridX, gridY)];
 
 			if (current.type == TYPE_NONE)
 				continue;
@@ -142,7 +147,7 @@ void simulate_region(atom * parts, region_bounds region, bool mutex) {
 			for (nx = -1; nx < 2; nx++)
 				for (ny = -1; ny < 2; ny++) {
 					if (nx || ny) {
-						atom & neighbour = parts[PART(x + nx, y + ny)];
+						atom & neighbour = parts[PART(gridX + nx, gridY + ny)];
 						if (neighbour.type == TYPE_NONE)
 							neighbourSpace++;
 						if (neighbour.type != current.type)
@@ -163,33 +168,33 @@ void simulate_region(atom * parts, region_bounds region, bool mutex) {
 
 			//if (mv < ISTP)
 			{
-				resultx = ((float)x) + current.vx;
-				resulty = ((float)y) + current.vy;
+				resultx = current.x + current.vx;
+				resulty = current.y + current.vy;
 			}
 			//else
 			{
 				//Interpolation, TODO
 			}
 
-			resultx_quant = (int)(resultx + 0.5f);
-			resulty_quant = (int)(resulty + 0.5f);
+			resultx_quant = PART_POS_QUANT(resultx);
+			resulty_quant = PART_POS_QUANT(resulty);
 
-			int clearx = x;
-			int cleary = y;
+			int clearx = gridX;
+			int cleary = gridY;
 
-			float clearxf = x;
-			float clearyf = y;
+			float clearxf = current.x;
+			float clearyf = current.y;
 
-			if (resultx_quant != x || resulty_quant != y) {
-				if (do_move(parts, current, resultx_quant, resulty_quant))
+			if (resultx_quant != gridX || resulty_quant != gridY) {
+				if (do_move(parts, current, resultx, resulty))
 					continue;
 				if (current.type == TYPE_GAS) {
-					if (do_move(parts, current, 0.25f + (float)(2 * x - resultx_quant), 0.25f + resulty_quant))
+					if (do_move(parts, current, 0.25f + (float)(2 * gridX - resultx_quant), 0.25f + resulty_quant))
 					{
 						current.vx *= COLLISIONLOSS;
 						continue;
 					}
-					else if (do_move(parts, current, 0.25f + resultx_quant, 0.25f + (float)(2 * y - resulty_quant)))
+					else if (do_move(parts, current, 0.25f + resultx_quant, 0.25f + (float)(2 * gridY - resulty_quant)))
 					{
 						current.vy *= COLLISIONLOSS;
 						continue;
@@ -202,13 +207,13 @@ void simulate_region(atom * parts, region_bounds region, bool mutex) {
 					}
 				}
 				if (current.type == TYPE_LIQUID || current.type == TYPE_POWDER) {
-					if (resultx_quant != x && do_move(parts, current, resultx_quant, y))
+					if (resultx_quant != gridX && do_move(parts, current, resultx, gridY))
 					{
 						current.vx *= COLLISIONLOSS;
 						current.vy *= COLLISIONLOSS;
 						continue;
 					}
-					else if (resulty_quant != y && do_move(parts, current, x, resulty_quant))
+					else if (resulty_quant != gridY && do_move(parts, current, gridX, resulty))
 					{
 						current.vx *= COLLISIONLOSS;
 						current.vy *= COLLISIONLOSS;
@@ -216,7 +221,7 @@ void simulate_region(atom * parts, region_bounds region, bool mutex) {
 					}
 					else {
 						int scanDirection = randd();
-						if (clearx != x || cleary != y || neighbourDiverse || neighbourSpace)
+						if (clearx != gridX || cleary != gridY || neighbourDiverse || neighbourSpace)
 						{
 							float dx = current.vx - current.vy * scanDirection;
 							float dy = current.vy + current.vx * scanDirection;
@@ -375,6 +380,8 @@ void add_parts(atom * parts, int origin_x, int origin_y, uint8_t type) {
 			parts[PART(x, y)].type = type;
 			parts[PART(x, y)].vx = 0;
 			parts[PART(x, y)].vy = 0;
+			parts[PART(x, y)].x = x;
+			parts[PART(x, y)].y = y;
 			if (type == TYPE_PARTICLE) {
 				parts[PART(x, y)].vx = randfd() * 5.0f;
 				parts[PART(x, y)].vy = randfd() * 5.0f;

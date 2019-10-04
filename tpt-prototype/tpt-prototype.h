@@ -18,6 +18,7 @@
 
 #define PART(x, y) (x) + ((y) * SIMULATIONW)
 
+#define PART_POS_QUANT(x) ((int)(x + 0.5f))
 
 #define PIX(x, y) (x) + ((y) * WINDOWW)
 
