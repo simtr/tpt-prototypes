@@ -100,6 +100,7 @@ std::atomic<uint32_t> last_partcount(0);
 
 void simulate_region(atom * parts, region_bounds region, bool mutex) {
 	int nx, ny, neighbourSpace, neighbourDiverse;
+	bool neighbourBlocking;
 
 	float mv = 0.0f, resultx = 0.0f, resulty = 0.0f;
 	int resultx_quant, resulty_quant;
@@ -143,19 +144,25 @@ void simulate_region(atom * parts, region_bounds region, bool mutex) {
 			}
 
 			neighbourSpace = neighbourDiverse = 0;
+			neighbourBlocking = true;
 
 			for (nx = -1; nx < 2; nx++)
 				for (ny = -1; ny < 2; ny++) {
 					if (nx || ny) {
 						atom & neighbour = parts[PART(gridX + nx, gridY + ny)];
 						if (neighbour.type == TYPE_NONE)
+						{
 							neighbourSpace++;
+							neighbourBlocking = false;
+						}
 						if (neighbour.type != current.type)
 							neighbourDiverse++;
+						if (displacementMatrix[neighbour.type][current.type])
+							neighbourBlocking = false;
 					}
 				}
 
-			if (!neighbourDiverse) {
+			if (neighbourBlocking) {
 				current.vx = 0.0f;
 				current.vy = 0.0f;
 				continue;
