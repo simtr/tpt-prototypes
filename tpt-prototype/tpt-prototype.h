@@ -18,8 +18,7 @@
 
 #define PART(x, y) (x) + ((y) * SIMULATIONW)
 
-#define PIX(x, y) (x) + ((y) * WINDOWW)
 
-#include <iostream>
+#define PIX(x, y) (x) + ((y) * WINDOWW)
 
 // TODO: Reference additional headers your program requires here.

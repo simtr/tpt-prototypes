@@ -26,7 +26,10 @@
 #include <iostream>
 #include <iomanip>
 
+#define NO_SDL_GLEXT
 #include "SDL.h"
+
+#include "GL/glew.h"
 
 #include "tpt-prototype.h"
 
@@ -405,6 +408,108 @@ void draw(atom * parts, uint32_t * vid) {
 	}
 }
 
+std::string get_shader_log(GLuint shader) {
+	std::string log_string;
+
+	int buffer_length = 0;
+	glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &buffer_length);
+
+	char * log = new char[buffer_length];
+
+	int log_length = 0;
+	glGetShaderInfoLog(shader, buffer_length, &log_length, log);
+	if (log_length > 0)
+	{
+		log_string = std::string(log);
+	}
+	else {
+		log_string = std::string();
+	}
+
+	delete[] log;
+
+	return log_string;
+}
+
+void print_shader_log(std::ostream & ostream, GLuint shader) {
+	std::string shader_log = get_shader_log(shader);
+
+	ostream << shader_log << std::endl;
+}
+
+std::string get_program_log(GLuint program) {
+	std::string log_string;
+
+	int buffer_length = 0;
+	glGetProgramiv(program, GL_INFO_LOG_LENGTH, &buffer_length);
+
+	char * log = new char[buffer_length];
+
+	int log_length = 0;
+	glGetProgramInfoLog(program, buffer_length, &log_length, log);
+	if (log_length > 0)
+	{
+		log_string = std::string(log);
+	}
+	else {
+		log_string = std::string();
+	}
+
+	delete[] log;
+
+	return log_string;
+}
+
+void print_program_log(std::ostream & ostream, GLuint program) {
+	std::string shader_log = get_program_log(program);
+
+	ostream << shader_log << std::endl;
+}
+
+GLuint compile_rogram(GLchar * vertex_source, GLchar* fragment_source) {
+	GLuint program = glCreateProgram();
+
+	GLuint vertex_shader = glCreateShader(GL_VERTEX_SHADER);
+	glShaderSource(vertex_shader, 1, &vertex_source, NULL);
+	glCompileShader(vertex_shader);
+
+	GLint vert_shader_compiled = GL_FALSE;
+	glGetShaderiv(vertex_shader, GL_COMPILE_STATUS, &vert_shader_compiled);
+	if (vert_shader_compiled != GL_TRUE)
+	{
+		print_shader_log(std::cerr, vertex_shader);
+		throw std::exception("vertex shader failed to compile");
+	}
+
+	glAttachShader(program, vertex_shader);
+
+	GLuint fragment_shader = glCreateShader(GL_FRAGMENT_SHADER);
+	glShaderSource(fragment_shader, 1, &fragment_source, NULL);
+	glCompileShader(fragment_shader);
+
+	GLint frag_shader_compiled = GL_FALSE;
+	glGetShaderiv(fragment_shader, GL_COMPILE_STATUS, &frag_shader_compiled);
+	if (frag_shader_compiled != GL_TRUE)
+	{
+		print_shader_log(std::cerr, fragment_shader);
+		throw std::exception("fragment shader failed to compile");
+	}
+
+	glAttachShader(program, fragment_shader);
+
+	glLinkProgram(program);
+
+	GLint program_linked = GL_FALSE;
+	glGetProgramiv(program, GL_LINK_STATUS, &program_linked);
+	if (program_linked != GL_TRUE)
+	{
+		print_program_log(std::cerr, program);
+		throw std::exception("program failed to link");
+	}
+
+	return program;
+}
+
 int main(int argc, char * args[])
 {
 	int num_threads = 4;
@@ -427,22 +532,63 @@ int main(int argc, char * args[])
 
 	SDL_Init(SDL_INIT_VIDEO);
 
+	SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
+	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 4);
+
 	SDL_Window * window = SDL_CreateWindow(
 		"tpt",
 		SDL_WINDOWPOS_UNDEFINED,
 		SDL_WINDOWPOS_UNDEFINED,
 		WINDOWW,
 		WINDOWH,
-		0
+		SDL_WINDOW_OPENGL
 	);
 
-	SDL_Renderer * renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_TARGETTEXTURE);
-	SDL_SetRenderDrawColor(renderer, 0, 0, 0, SDL_ALPHA_OPAQUE);
-	SDL_RenderSetLogicalSize(renderer, WINDOWW, WINDOWH);
-	SDL_RenderClear(renderer);
-	SDL_RenderPresent(renderer);
+	SDL_GLContext gl_context = SDL_GL_CreateContext(window);
 
-	SDL_Texture * texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STREAMING, WINDOWW, WINDOWH);
+	glewInit();
+
+	char * vertex = "#version 440\nin vec2 vertexPos2D; out vec2 texCoord; void main() { gl_Position = vec4(vertexPos2D.x, vertexPos2D.y, 0, 1); texCoord = (vertexPos2D * vec2(0.5, -0.5)) + vec2(0.5, 0.5); }";
+	char * fragment = "#version 440\nuniform sampler2D texture; in vec2 texCoord; out vec4 fragColour; void main() { fragColour = texture2D(texture, texCoord.st); }";
+
+	GLuint program = compile_rogram(vertex, fragment);
+	GLuint attrib_vertex_pos = glGetAttribLocation(program, "vertexPos2D");
+	GLuint uniform_texture_sampler = glGetAttribLocation(program, "texture");
+
+	GLuint vertex_array_object;
+	glGenVertexArrays(1, &vertex_array_object);
+	glBindVertexArray(vertex_array_object);
+
+	GLfloat vertex_data[] =
+	{
+		-1.0f, -1.0f,
+		 1.0f, -1.0f,
+		 1.0f,  1.0f,
+		-1.0f,  1.0f
+	};
+
+	GLuint index_data[] = { 0, 1, 2, 3 };
+
+	GLuint vertex_buffer_object;
+	glGenBuffers(1, &vertex_buffer_object);
+	glBindBuffer(GL_ARRAY_BUFFER, vertex_buffer_object);
+	glBufferData(GL_ARRAY_BUFFER, 2 * 4 * sizeof(GLfloat), vertex_data, GL_STATIC_DRAW);
+
+	GLuint element_buffer_object;
+	glGenBuffers(1, &element_buffer_object);
+	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, element_buffer_object);
+	glBufferData(GL_ELEMENT_ARRAY_BUFFER, 4 * sizeof(GLuint), index_data, GL_STATIC_DRAW);
+
+	GLuint texture;
+	glGenTextures(1, &texture);
+	glBindTexture(GL_TEXTURE_2D, texture);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, SIMULATIONW, SIMULATIONH, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+	glBindTexture(GL_TEXTURE_2D, NULL);
+
+	glClearColor(0, 0, 0, 1);	
 
 	uint32_t * vid = new uint32_t[WINDOWW * WINDOWH];
 	atom * parts = new atom[SIMULATIONW * SIMULATIONH];
@@ -453,7 +599,7 @@ int main(int argc, char * args[])
 
 	init_simulation(num_threads, num_groups, parts);
 
-	float average_sim_time = 0.0f, average_draw_time = 0.0f;
+	float average_sim_time = 0.0f, average_draw_time = 0.0f, average_gl_draw_time = 0.0f;
 
 	bool running = true;
 	bool mouse_down = false;
@@ -541,33 +687,61 @@ int main(int argc, char * args[])
 			}
 		}
 
+		auto simulated = false;
 		auto simulation_start = std::chrono::high_resolution_clock::now();
 		if (simulating) {
+			simulated = true;
 			simulate(parts);
 			if (step_lock) {
 				step_lock = false;
 				simulating = false;
 			}
 		}
+
+		glClear(GL_COLOR_BUFFER_BIT);
+
 		auto draw_start = std::chrono::high_resolution_clock::now();
 		draw(parts, vid);
-		auto draw_end = std::chrono::high_resolution_clock::now();
+
+		auto gl_draw_start = std::chrono::high_resolution_clock::now();
+
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, SIMULATIONW, SIMULATIONH, 0, GL_RGBA, GL_UNSIGNED_BYTE, vid);
+		
+		glBindTexture(GL_TEXTURE_2D, texture);
+
+		glUseProgram(program);
+		glUniform1i(uniform_texture_sampler, 0);
+		glEnableVertexAttribArray(attrib_vertex_pos);
+
+		glBindBuffer(GL_ARRAY_BUFFER, vertex_buffer_object);
+		glVertexAttribPointer(attrib_vertex_pos, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(GLfloat), NULL);
+
+		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, element_buffer_object);
+		glDrawElements(GL_TRIANGLE_FAN, 4, GL_UNSIGNED_INT, NULL);
+
+		glDisableVertexAttribArray(attrib_vertex_pos);
+		glUseProgram(NULL);
+		
+		auto gl_draw_end = std::chrono::high_resolution_clock::now();
+
+		SDL_GL_SwapWindow(window);
 
 		auto sim_time = std::chrono::duration_cast<std::chrono::microseconds>(draw_start - simulation_start);
-		auto draw_time = std::chrono::duration_cast<std::chrono::microseconds>(draw_end - draw_start);
+		auto draw_time = std::chrono::duration_cast<std::chrono::microseconds>(gl_draw_start - draw_start);
+		auto gl_draw_time = std::chrono::duration_cast<std::chrono::microseconds>(gl_draw_end - gl_draw_start);
 
-		average_sim_time = (average_sim_time * 0.9f) + ((sim_time.count()/1000.0f) * 0.1f);
-		average_draw_time = (average_draw_time * 0.9f) + ((draw_time.count()/1000.0f) * 0.1f);
+		if (simulated) {
+			average_sim_time = (average_sim_time * 0.9f) + ((sim_time.count() / 1000.0f) * 0.1f);
+		}
+		average_draw_time = (average_draw_time * 0.9f) + ((draw_time.count() / 1000.0f) * 0.1f);
+		average_gl_draw_time = (average_gl_draw_time * 0.9f) + ((gl_draw_time.count()/1000.0f) * 0.1f);
 
 		if (!(frame_counter % 100)) {
-			std::cout << "parts[" << last_partcount << "] sim[" << average_sim_time << "ms] draw[" << average_draw_time << "ms]" << std::endl;
+			std::cout << "parts[" << last_partcount << "] sim[" << average_sim_time << "ms] draw[" << average_draw_time << "ms, " << average_gl_draw_time << "ms]" << std::endl;
 		}
-
-		SDL_UpdateTexture(texture, NULL, vid, WINDOWW * sizeof(uint32_t));
-		SDL_RenderCopy(renderer, texture, NULL, NULL);
-		SDL_RenderPresent(renderer);
 	}
 
+	SDL_GL_DeleteContext(gl_context);
 	SDL_DestroyWindow(window);
 	SDL_Quit();
 
