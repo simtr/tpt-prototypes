@@ -6,6 +6,9 @@
 #define SIMULATIONW 800
 #define SIMULATIONH 600
 
+#define NS_SIMULATIONW (400)
+#define NS_SIMULATIONH (300)
+
 #define WINDOWW 800
 #define WINDOWH 600
 
@@ -16,10 +19,10 @@
 #define TYPE_GAS 4
 #define TYPE_PARTICLE 5
 
-#define PART(x, y) (x) + ((y) * SIMULATIONW)
+#define PART(x, y) ((x) + ((y) * SIMULATIONW))
 
 #define PART_POS_QUANT(x) ((int)(x + 0.5f))
 
-#define PIX(x, y) (x) + ((y) * WINDOWW)
+#define PIX(x, y) ((x) + ((y) * WINDOWW))
 
 // TODO: Reference additional headers your program requires here.

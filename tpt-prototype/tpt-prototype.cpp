@@ -33,6 +33,18 @@
 
 #include "tpt-prototype.h"
 
+extern char * ns_advect_compute_shader_source;
+extern char * ns_forces_compute_shader_source;
+extern char * ns_jacobi_compute_shader_source;
+extern char * ns_apply_pressure_compute_shader_source;
+extern char * ns_bounds_compute_shader_source;
+extern char * ns_vorticity_compute_shader_source;
+extern char * ns_apply_vorticity_compute_shader_source;
+
+extern char * basic_fragment_shader_source;
+extern char * basic_vertex_shader_source;
+extern char * velocity_pressure_fragment_shader_source;
+
 bool displacementMatrix[6][6]{
 	{false, false, false, false, false, false},
 	{false, false, false, false, false, false},
@@ -376,6 +388,33 @@ void simulate(atom * parts) {
 	mutex = !mutex;
 }
 
+void add_vel(GLuint buffer, GLuint pressure_buffer, int origin_x, int origin_y, int xvel, int yvel) {
+	float * velocity_data = (float *)glMapNamedBuffer(buffer, GL_READ_WRITE);
+	float * pressure_data = (float *)glMapNamedBuffer(pressure_buffer, GL_READ_WRITE);
+
+	origin_x /= SIMULATIONW / NS_SIMULATIONW;
+	origin_y /= SIMULATIONW / NS_SIMULATIONW;
+
+	int radius = 10 / (SIMULATIONW / NS_SIMULATIONW);
+	for (int y = origin_y - radius; y < origin_y + radius; y++) {
+		if (y < 0 || y >= NS_SIMULATIONH)
+			continue;
+		for (int x = origin_x - radius; x < origin_x + radius; x++) {
+			if (x < 0 || x >= NS_SIMULATIONW)
+				continue;
+
+			int pos = ((x)+((y)* NS_SIMULATIONW));
+
+			//pressure_data[(pos * 2)] = 1;// xvel;
+			velocity_data[(pos * 2)] =  xvel;
+			velocity_data[(pos * 2) + 1] = yvel;
+		}
+	}
+
+	glUnmapNamedBuffer(buffer);
+	glUnmapNamedBuffer(pressure_buffer);
+}
+
 void add_parts(atom * parts, int origin_x, int origin_y, uint8_t type) {
 	int radius = 10;
 	for (int y = origin_y - radius; y < origin_y + radius; y++) {
@@ -419,6 +458,13 @@ void draw(atom * parts, uint32_t * vid) {
 				break;
 			}
 		}
+	}
+}
+
+void gl_error_guard() {
+	GLenum error = glGetError();
+	if (error != GL_NO_ERROR) {
+		throw std::exception("glGetError != GL_NO_ERROR");
 	}
 }
 
@@ -480,7 +526,37 @@ void print_program_log(std::ostream & ostream, GLuint program) {
 	ostream << shader_log << std::endl;
 }
 
-GLuint compile_rogram(GLchar * vertex_source, GLchar* fragment_source) {
+GLuint compile_program(GLchar * compute_source) {
+	GLuint program = glCreateProgram();
+
+	GLuint compute_shader = glCreateShader(GL_COMPUTE_SHADER);
+	glShaderSource(compute_shader, 1, &compute_source, NULL);
+	glCompileShader(compute_shader);
+
+	GLint shader_compiled = GL_FALSE;
+	glGetShaderiv(compute_shader, GL_COMPILE_STATUS, &shader_compiled);
+	if (shader_compiled != GL_TRUE)
+	{
+		print_shader_log(std::cerr, compute_shader);
+		throw std::exception("compute shader failed to compile");
+	}
+
+	glAttachShader(program, compute_shader);
+
+	glLinkProgram(program);
+
+	GLint program_linked = GL_FALSE;
+	glGetProgramiv(program, GL_LINK_STATUS, &program_linked);
+	if (program_linked != GL_TRUE)
+	{
+		print_program_log(std::cerr, program);
+		throw std::exception("program failed to link");
+	}
+
+	return program;
+}
+
+GLuint compile_program(GLchar * vertex_source, GLchar* fragment_source) {
 	GLuint program = glCreateProgram();
 
 	GLuint vertex_shader = glCreateShader(GL_VERTEX_SHADER);
@@ -563,16 +639,103 @@ int main(int argc, char * args[])
 
 	glewInit();
 
-	char * vertex = "#version 440\nin vec2 vertexPos2D; out vec2 texCoord; void main() { gl_Position = vec4(vertexPos2D.x, vertexPos2D.y, 0, 1); texCoord = (vertexPos2D * vec2(0.5, -0.5)) + vec2(0.5, 0.5); }";
-	char * fragment = "#version 440\nuniform sampler2D texture; in vec2 texCoord; out vec4 fragColour; void main() { fragColour = texture2D(texture, texCoord.st); }";
-
-	GLuint program = compile_rogram(vertex, fragment);
+	GLuint program = compile_program(basic_vertex_shader_source, basic_fragment_shader_source);
 	GLuint attrib_vertex_pos = glGetAttribLocation(program, "vertexPos2D");
-	GLuint uniform_texture_sampler = glGetAttribLocation(program, "texture");
+	GLuint uniform_texture_sampler = glGetUniformLocation(program, "texture");
+
+	GLuint ns_texture_program = compile_program(basic_vertex_shader_source, velocity_pressure_fragment_shader_source);
+	GLuint ns_texture_attrib_vertex_pos = glGetAttribLocation(ns_texture_program, "vertexPos2D");
+	GLuint ns_texture_uniform_fieldheight = glGetUniformLocation(ns_texture_program, "fieldheight");
+	GLuint ns_texture_uniform_fieldwidth = glGetUniformLocation(ns_texture_program, "fieldwidth");
+	GLuint ns_texture_velocity_buffer = 0;
+	GLuint ns_texture_pressure_buffer = 1;
+
+	GLuint ns_advect_program = compile_program(ns_advect_compute_shader_source);
+	GLuint ns_advect_uniform_fieldwidth = glGetUniformLocation(ns_advect_program, "fieldwidth");
+	GLuint ns_advect_uniform_dt = glGetUniformLocation(ns_advect_program, "dt");
+	GLuint ns_advect_uniform_rdx = glGetUniformLocation(ns_advect_program, "rdx");
+	GLuint ns_advect_old_velocity_buffer = 0;
+	GLuint ns_advect_advection_buffer = 1;
+	GLuint ns_advect_velocity_buffer = 2;
+
+	GLuint ns_forces_program = compile_program(ns_forces_compute_shader_source);
+	GLuint ns_forces_uniform_fieldwidth = glGetUniformLocation(ns_forces_program, "fieldwidth");
+	GLuint ns_forces_uniform_halfrdx = glGetUniformLocation(ns_forces_program, "halfrdx");
+	GLuint ns_forces_divergence_buffer = 0;
+	GLuint ns_forces_velocity_buffer = 1;
+
+	GLuint ns_bounds_program = compile_program(ns_bounds_compute_shader_source);
+	GLuint ns_bounds_uniform_fieldwidth = glGetUniformLocation(ns_bounds_program, "fieldwidth");
+	GLuint ns_bounds_uniform_fieldheight = glGetUniformLocation(ns_bounds_program, "fieldheight");
+	GLuint ns_bounds_a_buffer = 0;
+	GLuint ns_bounds_b_buffer = 1;
+
+	GLuint ns_jacobi_program = compile_program(ns_jacobi_compute_shader_source);
+	GLuint ns_jacobi_uniform_fieldwidth = glGetUniformLocation(ns_jacobi_program, "fieldwidth");
+	GLuint ns_jacobi_uniform_alpha = glGetUniformLocation(ns_jacobi_program, "alpha");
+	GLuint ns_jacobi_uniform_rbeta = glGetUniformLocation(ns_jacobi_program, "rBeta");
+	GLuint ns_jacobi_b_buffer = 0;
+	GLuint ns_jacobi_x_buffer = 1;
+	GLuint ns_jacobi_output_buffer = 2;
+
+	GLuint ns_pressure_program = ns_jacobi_program;
+	GLuint ns_pressure_uniform_fieldwidth = ns_jacobi_uniform_fieldwidth;
+	GLuint ns_pressure_uniform_alpha = ns_jacobi_uniform_alpha;
+	GLuint ns_pressure_uniform_rbeta = ns_jacobi_uniform_rbeta;
+	GLuint ns_pressure_pressure_buffer = ns_jacobi_output_buffer;
+	GLuint ns_pressure_old_pressure_buffer = ns_jacobi_x_buffer;
+	GLuint ns_pressure_divergence_buffer = ns_jacobi_b_buffer;
+
+	GLuint ns_diffuse_program = ns_jacobi_program;
+	GLuint ns_diffuse_uniform_fieldwidth = ns_jacobi_uniform_fieldwidth;
+	GLuint ns_diffuse_uniform_alpha = ns_jacobi_uniform_alpha;
+	GLuint ns_diffuse_uniform_rbeta = ns_jacobi_uniform_rbeta;
+	GLuint ns_diffuse_velocity_buffer = ns_jacobi_output_buffer;
+	GLuint ns_diffuse_old_velocity_buffer = ns_jacobi_x_buffer;
+	GLuint ns_diffuse_old_velocity_2_buffer = ns_jacobi_b_buffer;
+
+	GLuint ns_apply_pressure_program = compile_program(ns_apply_pressure_compute_shader_source);
+	GLuint ns_apply_pressure_uniform_fieldwidth = glGetUniformLocation(ns_apply_pressure_program, "fieldwidth");
+	GLuint ns_apply_pressure_uniform_halfrdx = glGetUniformLocation(ns_apply_pressure_program, "halfrdx");
+	GLuint ns_apply_pressure_pressure_buffer = 0;
+	GLuint ns_apply_pressure_old_velocity_buffer = 1;
+	GLuint ns_apply_pressure_velocity_buffer = 2;
+
+	GLuint ns_vorticity_program = compile_program(ns_vorticity_compute_shader_source);
+	GLuint ns_vorticity_uniform_fieldwidth = glGetUniformLocation(ns_vorticity_program, "fieldwidth");
+	GLuint ns_vorticity_uniform_dx = glGetUniformLocation(ns_vorticity_program, "dx");
+	GLuint ns_vorticity_velocity_buffer = 0;
+	GLuint ns_vorticity_vorticity_buffer = 1;
+
+	GLuint ns_apply_vorticity_program = compile_program(ns_apply_vorticity_compute_shader_source);
+	GLuint ns_apply_vorticity_uniform_fieldwidth = glGetUniformLocation(ns_apply_vorticity_program, "fieldwidth");
+	GLuint ns_apply_vorticity_uniform_epsilon = glGetUniformLocation(ns_apply_vorticity_program, "epsilon");
+	GLuint ns_apply_vorticity_uniform_dx = glGetUniformLocation(ns_apply_vorticity_program, "dx");
+	GLuint ns_apply_vorticity_uniform_dt = glGetUniformLocation(ns_apply_vorticity_program, "dt");
+	GLuint ns_apply_vorticity_old_velocity_buffer = 0;
+	GLuint ns_apply_vorticity_vorticity_buffer = 1;
+	GLuint ns_apply_vorticity_velocity_buffer = 2;
 
 	GLuint vertex_array_object;
 	glGenVertexArrays(1, &vertex_array_object);
 	glBindVertexArray(vertex_array_object);
+
+	GLuint ns_buffers[6];
+	glGenBuffers(6, ns_buffers);
+	for (int bufid = 0; bufid < 6; bufid++) {
+		glBindBuffer(GL_SHADER_STORAGE_BUFFER, ns_buffers[bufid]);
+		gl_error_guard();
+		auto advection = new GLfloat[NS_SIMULATIONW * NS_SIMULATIONH * 2];
+		for (int i = 0; i < NS_SIMULATIONW * NS_SIMULATIONH * 2; i++) {
+			advection[i] = ((rand() % 1000) / 5000.0f)-1.0f;
+		}
+		glBufferData(GL_SHADER_STORAGE_BUFFER, NS_SIMULATIONW * NS_SIMULATIONH * 2 * sizeof(GLfloat), advection, GL_DYNAMIC_COPY);
+		glMemoryBarrier(GL_ALL_BARRIER_BITS);
+
+		gl_error_guard();
+		delete[] advection;
+	}
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, NULL);
 
 	GLfloat vertex_data[] =
 	{
@@ -616,12 +779,12 @@ int main(int argc, char * args[])
 	float average_sim_time = 0.0f, average_draw_time = 0.0f, average_gl_draw_time = 0.0f;
 
 	bool running = true;
-	bool mouse_down = false;
+	bool mouse_down_l = false, mouse_down_r = false;
 
 	long frame_counter = 0;
 
 	bool simulating = true;
-	bool step_lock = false;
+	bool step_lock = true;
 
 	while (running) {
 		frame_counter++;
@@ -689,14 +852,22 @@ int main(int argc, char * args[])
 				break;
 			}
 			case SDL_MOUSEMOTION:
-				if(mouse_down)
+				if(mouse_down_l)
 					add_parts(parts, event.motion.x, event.motion.y, particle_type);
+				if (mouse_down_r)
+					add_vel(ns_buffers[2], ns_buffers[4], event.motion.x, event.motion.y, event.motion.xrel, event.motion.yrel);
 				break;
 			case SDL_MOUSEBUTTONUP:
-				mouse_down = false;
+				if (event.button.button == SDL_BUTTON_LEFT)
+					mouse_down_l = false;
+				else if (event.button.button == SDL_BUTTON_RIGHT)
+					mouse_down_r = false;
 				break;
 			case SDL_MOUSEBUTTONDOWN:
-				mouse_down = true;
+				if (event.button.button == SDL_BUTTON_LEFT)
+					mouse_down_l = true;
+				else if (event.button.button == SDL_BUTTON_RIGHT)
+					mouse_down_r = true;
 				break;
 			}
 		}
@@ -705,6 +876,102 @@ int main(int argc, char * args[])
 		auto simulation_start = std::chrono::high_resolution_clock::now();
 		if (simulating) {
 			simulated = true;
+
+			int num = 10;
+			float dx = 0.1f;
+			float dt = 0.5f;
+			float viscosity = 1.1f;
+			float epsilon = 0.2f;// 1.5f;// 0.99f;
+
+			glUseProgram(ns_bounds_program);
+			glUniform1i(ns_bounds_uniform_fieldwidth, NS_SIMULATIONW);
+			glUniform1i(ns_bounds_uniform_fieldheight, NS_SIMULATIONH);
+			glBindBufferBase(GL_SHADER_STORAGE_BUFFER, ns_bounds_a_buffer, ns_buffers[2]);
+			glBindBufferBase(GL_SHADER_STORAGE_BUFFER, ns_bounds_b_buffer, ns_buffers[4]);
+			glDispatchCompute(NS_SIMULATIONW, NS_SIMULATIONH, 1);
+
+			GLuint temp = ns_buffers[0];
+			ns_buffers[0] = ns_buffers[2];
+			ns_buffers[2] = temp;
+
+			glUseProgram(ns_advect_program);
+			glUniform1i(ns_advect_uniform_fieldwidth, NS_SIMULATIONW);
+			glUniform1f(ns_advect_uniform_dt, dt);
+			glUniform1f(ns_advect_uniform_rdx, 1.0f / dx);
+			glBindBufferBase(GL_SHADER_STORAGE_BUFFER, ns_advect_advection_buffer, ns_buffers[0]);
+			glBindBufferBase(GL_SHADER_STORAGE_BUFFER, ns_advect_old_velocity_buffer, ns_buffers[0]);
+			glBindBufferBase(GL_SHADER_STORAGE_BUFFER, ns_advect_velocity_buffer, ns_buffers[2]);
+			glDispatchCompute(SIMULATIONW, SIMULATIONH, 1);
+
+			temp = ns_buffers[0];
+			ns_buffers[0] = ns_buffers[2];
+			ns_buffers[2] = temp;
+
+			glUseProgram(ns_diffuse_program);
+			float alp = (dx) * (dx) / (viscosity * dt);
+			glUniform1i(ns_diffuse_uniform_fieldwidth, NS_SIMULATIONW);
+			glUniform1f(ns_diffuse_uniform_alpha, alp);
+			glUniform1f(ns_diffuse_uniform_rbeta, 1.0f / (alp + 4.0f));
+			glBindBufferBase(GL_SHADER_STORAGE_BUFFER, ns_diffuse_old_velocity_buffer, ns_buffers[0]);
+			glBindBufferBase(GL_SHADER_STORAGE_BUFFER, ns_diffuse_old_velocity_2_buffer, ns_buffers[0]);
+			glBindBufferBase(GL_SHADER_STORAGE_BUFFER, ns_diffuse_velocity_buffer, ns_buffers[2]);
+			glDispatchCompute(SIMULATIONW, SIMULATIONH, 1);
+			
+			glUseProgram(ns_forces_program);
+			glUniform1i(ns_forces_uniform_fieldwidth, NS_SIMULATIONW);
+			glUniform1f(ns_forces_uniform_halfrdx, 0.5f / dx);
+			glBindBufferBase(GL_SHADER_STORAGE_BUFFER, ns_forces_divergence_buffer, ns_buffers[1]);
+			glBindBufferBase(GL_SHADER_STORAGE_BUFFER, ns_forces_velocity_buffer, ns_buffers[0]);
+			glDispatchCompute(SIMULATIONW, SIMULATIONH, 1);
+
+			for (int i = 0; i < num ; i++) {
+				temp = ns_buffers[3];
+				ns_buffers[3] = ns_buffers[4];
+				ns_buffers[4] = temp;
+
+				glUseProgram(ns_pressure_program);
+				glUniform1i(ns_pressure_uniform_fieldwidth, NS_SIMULATIONW);
+				glUniform1f(ns_pressure_uniform_alpha, -(dx) * (dx));
+				glUniform1f(ns_pressure_uniform_rbeta, 0.25f);
+				glBindBufferBase(GL_SHADER_STORAGE_BUFFER, ns_pressure_divergence_buffer, ns_buffers[1]);
+				glBindBufferBase(GL_SHADER_STORAGE_BUFFER, ns_pressure_old_pressure_buffer, ns_buffers[3]);
+				glBindBufferBase(GL_SHADER_STORAGE_BUFFER, ns_pressure_pressure_buffer, ns_buffers[4]);
+				glDispatchCompute(SIMULATIONW, SIMULATIONH, 1);
+			}
+
+			temp = ns_buffers[0];
+			ns_buffers[0] = ns_buffers[2];
+			ns_buffers[2] = temp;
+
+			glUseProgram(ns_apply_pressure_program);
+			glUniform1i(ns_apply_pressure_uniform_fieldwidth, NS_SIMULATIONW);
+			glUniform1f(ns_apply_pressure_uniform_halfrdx, 0.5f / dx);
+			glBindBufferBase(GL_SHADER_STORAGE_BUFFER, ns_apply_pressure_pressure_buffer, ns_buffers[4]);
+			glBindBufferBase(GL_SHADER_STORAGE_BUFFER, ns_apply_pressure_old_velocity_buffer, ns_buffers[0]);
+			glBindBufferBase(GL_SHADER_STORAGE_BUFFER, ns_apply_pressure_velocity_buffer, ns_buffers[2]);
+			glDispatchCompute(SIMULATIONW, SIMULATIONH, 1);
+
+			glUseProgram(ns_vorticity_program);
+			glUniform1i(ns_vorticity_uniform_fieldwidth, NS_SIMULATIONW);
+			glUniform1f(ns_vorticity_uniform_dx, dx);
+			glBindBufferBase(GL_SHADER_STORAGE_BUFFER, ns_vorticity_velocity_buffer, ns_buffers[2]);
+			glBindBufferBase(GL_SHADER_STORAGE_BUFFER, ns_vorticity_vorticity_buffer, ns_buffers[5]);
+			glDispatchCompute(SIMULATIONW, SIMULATIONH, 1);
+
+			temp = ns_buffers[0];
+			ns_buffers[0] = ns_buffers[2];
+			ns_buffers[2] = temp;
+
+			glUseProgram(ns_apply_vorticity_program);
+			glUniform1i(ns_apply_vorticity_uniform_fieldwidth, NS_SIMULATIONW);
+			glUniform1f(ns_apply_vorticity_uniform_epsilon, epsilon);
+			glUniform1f(ns_apply_vorticity_uniform_dx, dx);
+			glUniform1f(ns_apply_vorticity_uniform_dt, dt);
+			glBindBufferBase(GL_SHADER_STORAGE_BUFFER, ns_apply_vorticity_old_velocity_buffer, ns_buffers[0]);
+			glBindBufferBase(GL_SHADER_STORAGE_BUFFER, ns_apply_vorticity_velocity_buffer, ns_buffers[2]);
+			glBindBufferBase(GL_SHADER_STORAGE_BUFFER, ns_apply_vorticity_vorticity_buffer, ns_buffers[5]);
+			glDispatchCompute(SIMULATIONW, SIMULATIONH, 1);
+
 			simulate(parts);
 			if (step_lock) {
 				step_lock = false;
@@ -713,6 +980,8 @@ int main(int argc, char * args[])
 		}
 
 		glClear(GL_COLOR_BUFFER_BIT);
+		glEnable(GL_BLEND);
+		glBlendFunc(GL_ONE, GL_ONE);
 
 		auto draw_start = std::chrono::high_resolution_clock::now();
 		draw(parts, vid);
@@ -734,6 +1003,22 @@ int main(int argc, char * args[])
 		glDrawElements(GL_TRIANGLE_FAN, 4, GL_UNSIGNED_INT, NULL);
 
 		glDisableVertexAttribArray(attrib_vertex_pos);
+
+		glUseProgram(ns_texture_program);
+		
+		glUniform1i(ns_texture_uniform_fieldwidth, NS_SIMULATIONW);
+		glUniform1i(ns_texture_uniform_fieldheight, NS_SIMULATIONH);
+		glEnableVertexAttribArray(ns_texture_attrib_vertex_pos);
+		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, ns_texture_velocity_buffer, ns_buffers[2]);
+		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, ns_texture_pressure_buffer, ns_buffers[4]);
+
+		glBindBuffer(GL_ARRAY_BUFFER, vertex_buffer_object);
+		glVertexAttribPointer(ns_texture_attrib_vertex_pos, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(GLfloat), NULL);
+
+		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, element_buffer_object);
+		glDrawElements(GL_TRIANGLE_FAN, 4, GL_UNSIGNED_INT, NULL);
+
+		glDisableVertexAttribArray(ns_texture_attrib_vertex_pos);
 		glUseProgram(NULL);
 		
 		auto gl_draw_end = std::chrono::high_resolution_clock::now();
