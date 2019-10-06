@@ -464,7 +464,7 @@ void draw(atom * parts, uint32_t * vid) {
 void gl_error_guard() {
 	GLenum error = glGetError();
 	if (error != GL_NO_ERROR) {
-		throw std::exception("glGetError != GL_NO_ERROR");
+		throw std::runtime_error("glGetError != GL_NO_ERROR");
 	}
 }
 
@@ -538,7 +538,7 @@ GLuint compile_program(GLchar * compute_source) {
 	if (shader_compiled != GL_TRUE)
 	{
 		print_shader_log(std::cerr, compute_shader);
-		throw std::exception("compute shader failed to compile");
+		throw std::runtime_error("compute shader failed to compile");
 	}
 
 	glAttachShader(program, compute_shader);
@@ -550,7 +550,7 @@ GLuint compile_program(GLchar * compute_source) {
 	if (program_linked != GL_TRUE)
 	{
 		print_program_log(std::cerr, program);
-		throw std::exception("program failed to link");
+		throw std::runtime_error("program failed to link");
 	}
 
 	return program;
@@ -568,7 +568,7 @@ GLuint compile_program(GLchar * vertex_source, GLchar* fragment_source) {
 	if (vert_shader_compiled != GL_TRUE)
 	{
 		print_shader_log(std::cerr, vertex_shader);
-		throw std::exception("vertex shader failed to compile");
+		throw std::runtime_error("vertex shader failed to compile");
 	}
 
 	glAttachShader(program, vertex_shader);
@@ -582,7 +582,7 @@ GLuint compile_program(GLchar * vertex_source, GLchar* fragment_source) {
 	if (frag_shader_compiled != GL_TRUE)
 	{
 		print_shader_log(std::cerr, fragment_shader);
-		throw std::exception("fragment shader failed to compile");
+		throw std::runtime_error("fragment shader failed to compile");
 	}
 
 	glAttachShader(program, fragment_shader);
@@ -594,7 +594,7 @@ GLuint compile_program(GLchar * vertex_source, GLchar* fragment_source) {
 	if (program_linked != GL_TRUE)
 	{
 		print_program_log(std::cerr, program);
-		throw std::exception("program failed to link");
+		throw std::runtime_error("program failed to link");
 	}
 
 	return program;
@@ -609,7 +609,7 @@ int main(int argc, char * args[])
 		try {
 			std::stoi(args[1]);
 		}
-		catch (std::exception) {
+		catch (std::runtime_error) {
 			std::cout << "Invalid thread count supplied on command line, usage: " << args[0] << " <threadcount>" << std::endl;
 			return -1;
 		}
